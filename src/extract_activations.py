@@ -75,15 +75,26 @@ def format_chat(turns: list[dict], probe_suffix: str) -> str:
     rounds = _build_rounds(turns)
 
     if _TOKENIZER is not None and hasattr(_TOKENIZER, "apply_chat_template"):
-        # Build messages list up to (but not including) the last assistant reply,
-        # then append the probe suffix as the start of the assistant turn.
-        messages = [{"role": "system", "content": DEFAULT_SYSTEM}]
+        # Build a strictly alternating user/assistant message list.
+        # Embed system prompt in the first user message to avoid role issues.
+        raw_messages: list[dict] = []
         for idx, (user_text, asst_text) in enumerate(rounds):
-            messages.append({"role": "user", "content": user_text})
-            if idx < len(rounds) - 1 and asst_text is not None:
-                messages.append({"role": "assistant", "content": asst_text})
-        # apply_chat_template with add_generation_prompt=True appends the
-        # assistant-turn opener; we then concatenate the probe suffix.
+            if idx == 0:
+                user_text = f"{DEFAULT_SYSTEM}\n\n{user_text}"
+            raw_messages.append({"role": "user", "content": user_text})
+            if idx < len(rounds) - 1:
+                # Use a placeholder if assistant reply is missing
+                reply = asst_text if asst_text else "I understand."
+                raw_messages.append({"role": "assistant", "content": reply})
+
+        # Merge any accidental consecutive same-role messages
+        messages: list[dict] = []
+        for msg in raw_messages:
+            if messages and messages[-1]["role"] == msg["role"]:
+                messages[-1]["content"] += " " + msg["content"]
+            else:
+                messages.append(dict(msg))
+
         prompt = _TOKENIZER.apply_chat_template(
             messages,
             tokenize=False,
