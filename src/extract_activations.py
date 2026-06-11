@@ -201,8 +201,14 @@ def extract_for_attribute(
     meta:   list[dict]         = []
 
     for idx, rec in enumerate(tqdm(records, desc=f"[{attr_name}] extracting")):
-        text   = format_chat(rec["turns"], probe_sfx)
-        hidden = extract_last_token_hidden_states(model, tokenizer, text, device)
+        if not rec.get("turns"):
+            continue
+        try:
+            text   = format_chat(rec["turns"], probe_sfx)
+            hidden = extract_last_token_hidden_states(model, tokenizer, text, device)
+        except Exception as e:
+            print(f"\n  Skipping conv {idx} ({rec.get('subcategory')}): {type(e).__name__}: {e}")
+            continue
         # hidden: [num_layers+1, hidden_dim]
         X_list.append(hidden)
         y_list.append(rec["label"])
