@@ -31,6 +31,8 @@ COLOURS = {
     "knowledge_level": "#9467bd",
     "confusion":       "#8c564b",
     "emotional_state": "#e377c2",
+    "user_intent":     "#17becf",
+    "formality":       "#bcbd22",
 }
 
 LABELS = {
@@ -41,6 +43,8 @@ LABELS = {
     "knowledge_level": "Knowledge Level",
     "confusion":       "Confusion",
     "emotional_state": "Emotional State",
+    "user_intent":     "User Intent",
+    "formality":       "Formality",
 }
 
 
@@ -117,14 +121,22 @@ def plot_figure1(
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
 
+    STATIC = {"age", "gender", "education", "socioeconomic"}
+    is_replication = all(t in STATIC for t in targets)
+    subtitle = (
+        "Replication of Chen et al. Figure 1"
+        if is_replication
+        else "Dynamic user-state attributes — LLaMA-2-Chat-13B"
+    )
     fig.suptitle(
-        "Reading probe accuracy across LLaMA-2-Chat-13B layers\n(replication of Chen et al. Figure 1)",
+        f"Reading probe accuracy across layers\n{subtitle}",
         fontsize=12, y=1.02,
     )
     plt.tight_layout()
 
     if save:
-        out = output_path or (RESULT_DIR / "figure1.pdf")
+        name = "_".join(targets) if len(targets) > 1 else targets[0]
+        out = output_path or (RESULT_DIR / f"figure1_{name}.pdf")
         fig.savefig(out, bbox_inches="tight")
         print(f"Figure saved → {out}")
 
@@ -281,8 +293,9 @@ def plot_all_intervention_success(
     output_path: Path | None = None,
 ) -> None:
     """
-    Single grouped bar chart with all four attributes side by side,
-    replicating Table 2 as a figure.
+    Single grouped bar chart with all attributes side by side.
+    Static attributes fall back to paper values; dynamic attributes are loaded
+    from result files if available.
     """
     PAPER_VALUES = {
         "age":           {"label": "Age",   "control": 0.90, "reading": 0.80},
@@ -290,12 +303,20 @@ def plot_all_intervention_success(
         "education":     {"label": "Edu",   "control": 0.83, "reading": 0.73},
         "socioeconomic": {"label": "SES",   "control": 0.85, "reading": 0.72},
     }
+    # Dynamic attributes have no paper fallback — only include if file exists
+    DYNAMIC_LABELS = {
+        "knowledge_level": "Know.",
+        "confusion":       "Confuse.",
+        "emotional_state": "Emotion",
+        "user_intent":     "Intent",
+        "formality":       "Formal",
+    }
 
     attrs, ctrl_vals, read_vals, colors = [], [], [], []
+    # Static (paper) attributes
     for attr_name, pv in PAPER_VALUES.items():
         try:
             data = load_intervention_results(attr_name)
-            # Use mean across all pairs
             ctrl = float(np.mean(list(data["probe_types"]["control"].values())))
             read = float(np.mean(list(data["probe_types"]["reading"].values())))
         except FileNotFoundError:
@@ -305,16 +326,33 @@ def plot_all_intervention_success(
         ctrl_vals.append(ctrl)
         read_vals.append(read)
         colors.append(COLOURS.get(attr_name, "#333"))
+    # Dynamic attributes — only include if results exist
+    for attr_name, label in DYNAMIC_LABELS.items():
+        try:
+            data = load_intervention_results(attr_name)
+            ctrl_items = data["probe_types"]["control"]
+            read_items = data["probe_types"]["reading"]
+            if not ctrl_items:
+                continue
+            ctrl = float(np.mean(list(ctrl_items.values())))
+            read = float(np.mean(list(read_items.values()))) if read_items else None
+            attrs.append(label)
+            ctrl_vals.append(ctrl)
+            read_vals.append(read)
+            colors.append(COLOURS.get(attr_name, "#333"))
+        except FileNotFoundError:
+            pass
 
     x     = np.arange(len(attrs))
     width = 0.35
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(max(8, len(attrs) * 1.1), 4))
     for i, (c, r, col) in enumerate(zip(ctrl_vals, read_vals, colors)):
         ax.bar(x[i] - width / 2, c, width, color=col, alpha=0.9,
                label="Control" if i == 0 else "_")
-        ax.bar(x[i] + width / 2, r, width, color=col, alpha=0.45, hatch="//",
-               label="Reading" if i == 0 else "_")
+        if r is not None:
+            ax.bar(x[i] + width / 2, r, width, color=col, alpha=0.45, hatch="//",
+                   label="Reading" if i == 0 else "_")
 
     ax.set_xticks(x)
     ax.set_xticklabels(attrs)

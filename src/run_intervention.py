@@ -292,13 +292,15 @@ def evaluate_with_gpt4(
 
     for q, ra, rb in tqdm(zip(questions, responses_a, responses_b), total=len(questions),
                           desc="GPT-4 eval"):
-        # Randomly assign which demographic we ask about to avoid position bias
+        # Randomly decide which target demographic to ask about to avoid position bias.
+        # ra = response generated under label_a activation patch
+        # rb = response generated under label_b activation patch
         if rng.integers(2) == 0:
-            demographic = f"highly {label_a}"
-            correct     = 1
+            demographic = f"a user who is highly {label_a}"
+            correct     = 1   # ra should match better
         else:
-            demographic = f"not very {label_a}"
-            correct     = 2
+            demographic = f"a user who is highly {label_b}"
+            correct     = 2   # rb should match better
 
         prompt_text = GPT4_TEMPLATE.format(
             demographic=demographic, prompt=q, r1=ra, r2=rb
