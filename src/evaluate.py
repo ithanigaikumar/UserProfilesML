@@ -317,8 +317,10 @@ def plot_all_intervention_success(
     for attr_name, pv in PAPER_VALUES.items():
         try:
             data = load_intervention_results(attr_name)
-            ctrl = float(np.mean(list(data["probe_types"]["control"].values())))
-            read = float(np.mean(list(data["probe_types"]["reading"].values())))
+            ctrl_items = data["probe_types"]["control"]
+            read_items = data["probe_types"]["reading"]
+            ctrl = float(np.mean(list(ctrl_items.values()))) if ctrl_items else pv["control"]
+            read = float(np.mean(list(read_items.values()))) if read_items else pv["reading"]
         except FileNotFoundError:
             ctrl = pv["control"]
             read = pv["reading"]
