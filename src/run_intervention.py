@@ -307,7 +307,7 @@ def evaluate_with_gpt4(
         for attempt in range(5):
             try:
                 resp = client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
+                    model="gpt-4o",
                     messages=[
                         {"role": "system", "content": "You are a helpful assistant."},
                         {"role": "user",   "content": prompt_text},
