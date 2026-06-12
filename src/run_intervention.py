@@ -315,10 +315,17 @@ def evaluate_with_gpt4(
                     temperature=0.0,
                 )
                 raw = resp.choices[0].message.content.strip()
-                raw = raw.removeprefix("```json\n").removesuffix("\n```")
-                answer = int(json.loads(raw)["answer"])
+                # Handle plain "1" or "2" responses
+                if raw in ("1", "2"):
+                    answer = int(raw)
+                    break
+                raw_clean = raw.removeprefix("```json\n").removesuffix("\n```").strip()
+                parsed = json.loads(raw_clean)
+                # answer may be int or string
+                answer = int(str(parsed["answer"]).strip())
                 break
             except Exception as e:
+                print(f"\n  GPT-4 attempt {attempt+1} failed: {type(e).__name__}: {e}")
                 time.sleep(2 ** attempt)
                 answer = -1
 
