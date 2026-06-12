@@ -314,16 +314,28 @@ def evaluate_with_gpt4(
                     ],
                     temperature=0.0,
                 )
-                raw = resp.choices[0].message.content.strip()
-                # Handle plain "1" or "2" responses
+                raw = (resp.choices[0].message.content or "").strip()
+                print(f"\n  [GPT-4 raw] {repr(raw[:200])}")
+                # Try plain digit first
                 if raw in ("1", "2"):
                     answer = int(raw)
                     break
-                raw_clean = raw.removeprefix("```json\n").removesuffix("\n```").strip()
-                parsed = json.loads(raw_clean)
-                # answer may be int or string
-                answer = int(str(parsed["answer"]).strip())
-                break
+                # Try JSON parse
+                raw_clean = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                if raw_clean:
+                    try:
+                        parsed = json.loads(raw_clean)
+                        answer = int(str(parsed["answer"]).strip())
+                        break
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        pass
+                # Fallback: find first digit 1 or 2 anywhere in response
+                import re as _re
+                m = _re.search(r'\b([12])\b', raw)
+                if m:
+                    answer = int(m.group(1))
+                    break
+                raise ValueError(f"Cannot parse answer from: {repr(raw[:200])}")
             except Exception as e:
                 print(f"\n  GPT-4 attempt {attempt+1} failed: {type(e).__name__}: {e}")
                 time.sleep(2 ** attempt)
