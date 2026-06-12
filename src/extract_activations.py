@@ -46,16 +46,36 @@ DEFAULT_SYSTEM  = "You are a helpful, respectful and honest assistant."
 _TOKENIZER = None
 
 
-def _build_rounds(turns: list[dict]) -> list[tuple[str, str | None]]:
+def _normalise_turn(t) -> dict | None:
+    """Coerce a turn to {"role": str, "content": str} or return None if unusable."""
+    if isinstance(t, dict):
+        role    = t.get("role") or t.get("speaker") or t.get("type", "")
+        content = t.get("content") or t.get("text") or t.get("message", "")
+        if role and content:
+            role = role.lower().strip()
+            if "user" in role or "human" in role:
+                role = "user"
+            elif "assistant" in role or "ai" in role or "bot" in role:
+                role = "assistant"
+            return {"role": role, "content": str(content)}
+    if isinstance(t, str) and t.strip():
+        # bare string — can't determine role, skip
+        return None
+    return None
+
+
+def _build_rounds(turns: list) -> list[tuple[str, str | None]]:
     """Parse flat turn list into (user, assistant|None) round pairs."""
+    # Normalise and drop unusable entries
+    clean = [n for t in turns if (n := _normalise_turn(t)) is not None]
     rounds: list[tuple[str, str | None]] = []
     i = 0
-    while i < len(turns):
-        if turns[i]["role"] == "user":
-            user_text = turns[i]["content"]
+    while i < len(clean):
+        if clean[i]["role"] == "user":
+            user_text = clean[i]["content"]
             asst_text = (
-                turns[i + 1]["content"]
-                if (i + 1 < len(turns) and turns[i + 1]["role"] == "assistant")
+                clean[i + 1]["content"]
+                if (i + 1 < len(clean) and clean[i + 1]["role"] == "assistant")
                 else None
             )
             rounds.append((user_text, asst_text))
