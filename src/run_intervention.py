@@ -261,18 +261,23 @@ def make_edit_function(
 def make_probe_deltas(
     probes: dict[int, LinearProbeClassification],
     target_idx: int,
+    randomize: bool = False,
 ) -> dict[int, torch.Tensor]:
     """
     Chen et al. approach: use the reading probe weight row for the target class
     as the translation direction, normalised to unit L2.
-    For a sigmoid probe trained with cross-entropy, W[i,:] is pushed in the
-    direction of class-i activations during training, so W[i,:] points TOWARD
-    class i — no negation needed.
-    delta[layer] = W[target_idx, :] / ||W[target_idx, :]||
+    If randomize=True, replace with a random unit vector of the same shape
+    (control condition: verifies any effect is attribute-specific, not generic
+    perturbation).
     """
     deltas = {}
+    rng = torch.Generator()
+    rng.manual_seed(42)
     for layer, probe in probes.items():
-        w = probe.proj[0].weight[target_idx].detach().float()  # [D]
+        if randomize:
+            w = torch.randn(probe.proj[0].weight.shape[1], generator=rng)
+        else:
+            w = probe.proj[0].weight[target_idx].detach().float()  # [D]
         deltas[layer] = w / (w.norm() + 1e-8)
     return deltas
 
@@ -461,11 +466,8 @@ def main():
     model.config.pad_token_id = tokenizer.pad_token_id
     model.eval()
 
-    # Select probe checkpoint directory
-    if args.probe_type == "control":
-        probes = load_control_probes(args.attribute, PROBE_DIR / "controlling_probe")
-    else:
-        probes = load_control_probes(args.attribute, PROBE_DIR)
+    # Load reading probes (used for both conditions)
+    probes = load_control_probes(args.attribute, PROBE_DIR)
     print(f"  Loaded {len(probes)} probe checkpoints for probe_type={args.probe_type}")
 
     # Build layer names for baukit hook
@@ -485,10 +487,12 @@ def main():
 
     # Compute probe-weight steering vectors (Chen et al. approach)
     # delta[layer] = W[target_class, :] / ||W[target_class, :]|| for reading probes
+    # delta[layer] = random unit vector for control condition
     idx_a = subcats.index(sub_a)
     idx_b = subcats.index(sub_b)
-    deltas_toward_a = make_probe_deltas(probes, idx_a)
-    deltas_toward_b = make_probe_deltas(probes, idx_b)
+    is_control = (args.probe_type == "control")
+    deltas_toward_a = make_probe_deltas(probes, idx_a, randomize=is_control)
+    deltas_toward_b = make_probe_deltas(probes, idx_b, randomize=is_control)
     print(f"  Steering vectors ready (probe_type={args.probe_type}, N={args.N}).")
 
     # Generate responses
