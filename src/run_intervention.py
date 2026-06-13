@@ -363,7 +363,7 @@ def main():
     parser.add_argument("--attribute", required=True, choices=list(ALL_ATTRIBUTES.keys()))
     parser.add_argument("--contrast", nargs=2, metavar=("SUB_A", "SUB_B"),
                         help="Two subcategories to contrast, e.g. --contrast expert novice")
-    parser.add_argument("--N", type=float, default=8.0, help="Intervention strength")
+    parser.add_argument("--N", type=float, default=20.0, help="Intervention strength")
     parser.add_argument("--layers", nargs=2, type=int, default=[19, 29],
                         metavar=("FROM", "TO"), help="Layer range [from, to)")
     parser.add_argument("--batch-size", type=int, default=5)
@@ -426,10 +426,13 @@ def main():
 
     n_classes = len(subcats)
 
-    def make_target(sub: str) -> torch.Tensor:
-        idx = subcats.index(sub)
-        t   = torch.zeros(1, n_classes)
-        t[0, idx] = 1.0
+    def make_contrast(src: str, tgt: str) -> torch.Tensor:
+        """One-hot contrast vector: +1 at target index, -1 at source index."""
+        s_idx = subcats.index(src)
+        t_idx = subcats.index(tgt)
+        t = torch.zeros(1, n_classes)
+        t[0, t_idx] =  1.0
+        t[0, s_idx] = -1.0
         return t
 
     # Generate responses
@@ -438,14 +441,14 @@ def main():
         model, tokenizer, questions, null_edit, [], args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a}…")
-    edit_a = make_edit_function(probes, make_target(sub_a), args.N, from_l, to_l)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a} (from {sub_b})…")
+    edit_a = make_edit_function(probes, make_contrast(sub_b, sub_a), args.N, from_l, to_l)
     responses_a = collect_responses(
         model, tokenizer, questions, edit_a, layer_names, args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b}…")
-    edit_b = make_edit_function(probes, make_target(sub_b), args.N, from_l, to_l)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b} (from {sub_a})…")
+    edit_b = make_edit_function(probes, make_contrast(sub_a, sub_b), args.N, from_l, to_l)
     responses_b = collect_responses(
         model, tokenizer, questions, edit_b, layer_names, args.batch_size, args.device
     )
