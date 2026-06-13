@@ -265,11 +265,14 @@ def make_probe_deltas(
     """
     Chen et al. approach: use the reading probe weight row for the target class
     as the translation direction, normalised to unit L2.
-    delta[layer] = W[target_idx, :] / ||W[target_idx, :]||
+    We negate because the sigmoid probe's W[i,:] points away from class i
+    (lower activation = higher sigmoid output after training with cross-entropy).
+    delta[layer] = -W[target_idx, :] / ||W[target_idx, :]||
     """
     deltas = {}
     for layer, probe in probes.items():
         w = probe.proj[0].weight[target_idx].detach().float()  # [D]
+        w = -w  # negate: probe weight points away from class due to sigmoid convention
         deltas[layer] = w / (w.norm() + 1e-8)
     return deltas
 
