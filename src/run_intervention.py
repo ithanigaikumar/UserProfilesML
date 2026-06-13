@@ -204,14 +204,16 @@ def make_edit_function(
         if layer_num not in classifier_dict:
             return output
 
-        probe  = deepcopy(classifier_dict[layer_num])
-        target = cf_target.to(torch.float)
+        probe  = classifier_dict[layer_num]
+        device = output[0].device
+        target = cf_target.to(torch.float).to(device)
+        weight = probe.proj[0].weight.to(torch.float).to(device)
         # Linear translation: x' = x + (target @ W) * N
-        delta = (target @ probe.proj[0].weight).detach()   # [1, hidden_dim]
+        delta = (target @ weight).detach()   # [1, hidden_dim]
 
         hidden = output[0][:, -1, :].to(torch.float)
         hidden = hidden + delta * N
-        output[0][:, -1, :] = hidden.to(torch.float16)
+        output[0][:, -1, :] = hidden.to(output[0].dtype)
         return output
 
     return edit_fn
@@ -396,16 +398,26 @@ def main():
     model.eval()
 
     # Select probe checkpoint directory
-    probe_subdir = PROBE_DIR / ("controlling_probe" if args.probe_type == "control" else args.attribute)
-    probes = load_control_probes(args.attribute, probe_subdir.parent)
+    if args.probe_type == "control":
+        probes = load_control_probes(args.attribute, PROBE_DIR / "controlling_probe")
+    else:
+        probes = load_control_probes(args.attribute, PROBE_DIR)
+    print(f"  Loaded {len(probes)} probe checkpoints for probe_type={args.probe_type}")
 
     # Build layer names for baukit hook
     from_l, to_l = args.layers
-    layer_names = [
-        name for name, _ in model.named_modules()
-        if name != "" and name[-1].isdigit()
-        and from_l <= int(name[name.rfind("model.layers.") + len("model.layers."):]) < to_l
-    ]
+    layer_names = []
+    for name, _ in model.named_modules():
+        if "model.layers." not in name:
+            continue
+        suffix = name[name.rfind("model.layers.") + len("model.layers."):]
+        # Only top-level layer containers: suffix is purely digits
+        if not suffix.isdigit():
+            continue
+        layer_num = int(suffix)
+        if from_l <= layer_num < to_l:
+            layer_names.append(name)
+    print(f"  Hooking {len(layer_names)} layers: {layer_names[:3]}...")
 
     n_classes = len(subcats)
 
