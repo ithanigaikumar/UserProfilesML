@@ -235,12 +235,12 @@ def make_edit_function(
 ):
     """
     Returns a hook function for baukit.TraceDict.
-    Adds N * delta[layer] to the last-token residual stream.
-    delta vectors should already be unit-normalised.
+    Translates the last-token residual stream by N units in the delta direction.
+    delta vectors should already be unit-normalised (L2=1), so N = translation distance.
+    This matches Chen et al.: same L2 distance translation using probe weight vector.
     """
     def edit_fn(output, layer_name: str):
         suffix = layer_name[layer_name.rfind("model.layers.") + len("model.layers."):]
-        # Only top-level layer blocks have purely numeric suffix
         if not suffix.isdigit():
             return output
         layer_num = int(suffix)
@@ -256,6 +256,22 @@ def make_edit_function(
         return output
 
     return edit_fn
+
+
+def make_probe_deltas(
+    probes: dict[int, LinearProbeClassification],
+    target_idx: int,
+) -> dict[int, torch.Tensor]:
+    """
+    Chen et al. approach: use the reading probe weight row for the target class
+    as the translation direction, normalised to unit L2.
+    delta[layer] = W[target_idx, :] / ||W[target_idx, :]||
+    """
+    deltas = {}
+    for layer, probe in probes.items():
+        w = probe.proj[0].weight[target_idx].detach().float()  # [D]
+        deltas[layer] = w / (w.norm() + 1e-8)
+    return deltas
 
 
 # ── Response generation ────────────────────────────────────────────────────────
@@ -397,8 +413,8 @@ def main():
     parser.add_argument("--attribute", required=True, choices=list(ALL_ATTRIBUTES.keys()))
     parser.add_argument("--contrast", nargs=2, metavar=("SUB_A", "SUB_B"),
                         help="Two subcategories to contrast, e.g. --contrast expert novice")
-    parser.add_argument("--N", type=float, default=15.0, help="Intervention strength (applied to unit-normalised delta)")
-    parser.add_argument("--layers", nargs=2, type=int, default=[19, 29],
+    parser.add_argument("--N", type=float, default=8.0, help="Translation distance in activation space (L2 units, paper uses 8)")
+    parser.add_argument("--layers", nargs=2, type=int, default=[20, 29],
                         metavar=("FROM", "TO"), help="Layer range [from, to)")
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -458,11 +474,13 @@ def main():
             layer_names.append(name)
     print(f"  Hooking {len(layer_names)} layers: {layer_names[:3]}...")
 
-    # Compute mean-activation steering vectors (Chen et al. approach)
-    print(f"  Computing mean-activation steering vectors from saved activations…")
-    deltas_a2b = load_mean_activations(args.attribute, sub_a, sub_b, from_l, to_l)  # a→b
-    deltas_b2a = {k: -v for k, v in deltas_a2b.items()}                              # b→a
-    print(f"  Steering vectors computed for {len(deltas_a2b)} layers.")
+    # Compute probe-weight steering vectors (Chen et al. approach)
+    # delta[layer] = W[target_class, :] / ||W[target_class, :]|| for reading probes
+    idx_a = subcats.index(sub_a)
+    idx_b = subcats.index(sub_b)
+    deltas_toward_a = make_probe_deltas(probes, idx_a)
+    deltas_toward_b = make_probe_deltas(probes, idx_b)
+    print(f"  Steering vectors ready (probe_type={args.probe_type}, N={args.N}).")
 
     # Generate responses
     print(f"\n[{args.attribute}] Generating responses: unintervened…")
@@ -470,14 +488,14 @@ def main():
         model, tokenizer, questions, null_edit, [], args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a} (steered from {sub_b})…")
-    edit_a = make_edit_function(deltas_b2a, args.N)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a}…")
+    edit_a = make_edit_function(deltas_toward_a, args.N)
     responses_a = collect_responses(
         model, tokenizer, questions, edit_a, layer_names, args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b} (steered from {sub_a})…")
-    edit_b = make_edit_function(deltas_a2b, args.N)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b}…")
+    edit_b = make_edit_function(deltas_toward_b, args.N)
     responses_b = collect_responses(
         model, tokenizer, questions, edit_b, layer_names, args.batch_size, args.device
     )
