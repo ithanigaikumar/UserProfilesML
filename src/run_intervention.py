@@ -49,6 +49,7 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import (
+    ACT_DIR,
     ALL_ATTRIBUTES,
     COT_DIR,
     HIDDEN_DIM,
@@ -155,6 +156,50 @@ def measure_cot_complexity(text: str) -> dict[str, float]:
     }
 
 
+# ── Mean-activation steering vectors ─────────────────────────────────────────
+
+def load_mean_activations(
+    attr_name: str,
+    sub_a: str,
+    sub_b: str,
+    from_layer: int,
+    to_layer: int,
+) -> dict[int, torch.Tensor]:
+    """
+    Compute per-layer mean activation difference (sub_b - sub_a) from saved
+    activation files.  Returns a dict mapping layer index -> delta tensor [D].
+    This is the Chen et al. approach: steer in the direction of the mean
+    activation difference between two classes.
+    """
+    attr     = ALL_ATTRIBUTES[attr_name]
+    subcats  = attr["subcategories"]
+    act_path = ACT_DIR / f"{attr_name}.pt"
+    if not act_path.exists():
+        raise FileNotFoundError(f"Activations not found: {act_path}")
+
+    data   = torch.load(act_path, map_location="cpu")
+    acts   = data["X"].float()                                    # [N, L, D]
+    labels = data["y"]
+    if not isinstance(labels, torch.Tensor):
+        labels = torch.tensor(labels)
+
+    idx_a = subcats.index(sub_a)
+    idx_b = subcats.index(sub_b)
+
+    deltas: dict[int, torch.Tensor] = {}
+    for layer in range(from_layer, to_layer):
+        # acts[:, layer, :] — layer slot 0 = embedding, slot i = layer i-1 output
+        # use layer+1 to match residual stream after layer `layer`
+        layer_slot = min(layer + 1, acts.shape[1] - 1)
+        h = acts[:, layer_slot, :]         # [N, D]
+        mean_a = h[labels == idx_a].mean(0)  # [D]
+        mean_b = h[labels == idx_b].mean(0)  # [D]
+        delta  = mean_b - mean_a             # [D] direction: a -> b
+        delta  = delta / (delta.norm() + 1e-8)
+        deltas[layer] = delta
+    return deltas
+
+
 # ── Probe loading ──────────────────────────────────────────────────────────────
 
 def load_control_probes(attr_name: str, probe_dir: Path) -> dict[int, LinearProbeClassification]:
@@ -182,44 +227,31 @@ def load_control_probes(attr_name: str, probe_dir: Path) -> dict[int, LinearProb
 
 # ── Activation patching ────────────────────────────────────────────────────────
 
+# ── Activation patching ────────────────────────────────────────────────────────
+
 def make_edit_function(
-    classifier_dict: dict[int, LinearProbeClassification],
-    cf_target: torch.Tensor,          # [1, n_classes] one-hot
+    layer_deltas: dict[int, torch.Tensor],   # layer -> [D] unit-norm delta
     N: float,
-    from_layer: int,
-    to_layer: int,
-    residual: bool = True,
 ):
     """
-    Returns a hook function compatible with baukit.TraceDict.
-
-    The hook adds the probe's weight vector scaled by N in the direction
-    of cf_target at the last token position, mirroring the paper's
-    optimize_one_inter_rep (linear translation).
+    Returns a hook function for baukit.TraceDict.
+    Adds N * delta[layer] to the last-token residual stream.
+    delta vectors should already be unit-normalised.
     """
     def edit_fn(output, layer_name: str):
-        if residual:
-            layer_str = layer_name[layer_name.rfind("model.layers.") + len("model.layers."):]
-        else:
-            layer_str = layer_name[
-                layer_name.rfind("model.layers.") + len("model.layers."):
-                layer_name.rfind(".mlp")
-            ]
-        layer_num = int(layer_str)
-        if layer_num not in classifier_dict:
+        suffix = layer_name[layer_name.rfind("model.layers.") + len("model.layers."):]
+        # Only top-level layer blocks have purely numeric suffix
+        if not suffix.isdigit():
+            return output
+        layer_num = int(suffix)
+        if layer_num not in layer_deltas:
             return output
 
-        probe  = classifier_dict[layer_num]
         device = output[0].device
-        target = cf_target.to(torch.float).to(device)
-        weight = probe.proj[0].weight.to(torch.float).to(device)
-        # Contrast direction: move toward target, away from source
-        delta = (target @ weight).detach()   # [1, hidden_dim]
-        # Normalise to unit length so N is a meaningful scale in activation space
-        delta = delta / (delta.norm() + 1e-8)
+        delta  = layer_deltas[layer_num].to(torch.float).to(device)  # [D]
 
-        hidden = output[0][:, -1, :].to(torch.float)
-        hidden = hidden + delta * N
+        hidden = output[0][:, -1, :].to(torch.float)   # [B, D]
+        hidden = hidden + delta.unsqueeze(0) * N
         output[0][:, -1, :] = hidden.to(output[0].dtype)
         return output
 
@@ -426,16 +458,11 @@ def main():
             layer_names.append(name)
     print(f"  Hooking {len(layer_names)} layers: {layer_names[:3]}...")
 
-    n_classes = len(subcats)
-
-    def make_contrast(src: str, tgt: str) -> torch.Tensor:
-        """One-hot contrast vector: +1 at target index, -1 at source index."""
-        s_idx = subcats.index(src)
-        t_idx = subcats.index(tgt)
-        t = torch.zeros(1, n_classes)
-        t[0, t_idx] =  1.0
-        t[0, s_idx] = -1.0
-        return t
+    # Compute mean-activation steering vectors (Chen et al. approach)
+    print(f"  Computing mean-activation steering vectors from saved activations…")
+    deltas_a2b = load_mean_activations(args.attribute, sub_a, sub_b, from_l, to_l)  # a→b
+    deltas_b2a = {k: -v for k, v in deltas_a2b.items()}                              # b→a
+    print(f"  Steering vectors computed for {len(deltas_a2b)} layers.")
 
     # Generate responses
     print(f"\n[{args.attribute}] Generating responses: unintervened…")
@@ -443,14 +470,14 @@ def main():
         model, tokenizer, questions, null_edit, [], args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a} (from {sub_b})…")
-    edit_a = make_edit_function(probes, make_contrast(sub_b, sub_a), args.N, from_l, to_l)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_a} (steered from {sub_b})…")
+    edit_a = make_edit_function(deltas_b2a, args.N)
     responses_a = collect_responses(
         model, tokenizer, questions, edit_a, layer_names, args.batch_size, args.device
     )
 
-    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b} (from {sub_a})…")
-    edit_b = make_edit_function(probes, make_contrast(sub_a, sub_b), args.N, from_l, to_l)
+    print(f"\n[{args.attribute}] Generating responses: intervened → {sub_b} (steered from {sub_a})…")
+    edit_b = make_edit_function(deltas_a2b, args.N)
     responses_b = collect_responses(
         model, tokenizer, questions, edit_b, layer_names, args.batch_size, args.device
     )
