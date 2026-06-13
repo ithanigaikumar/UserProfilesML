@@ -167,8 +167,13 @@ def load_control_probes(attr_name: str, probe_dir: Path) -> dict[int, LinearProb
     for ckpt in sorted(probe_subdir.glob("layer_*_multiclass.pt")):
         layer = int(re.search(r"layer_(\d+)_multiclass", ckpt.stem).group(1))
         data  = torch.load(ckpt, map_location="cpu")
+        state = data["state_dict"]
+        # Remap old key names (linear.*) to current architecture (proj.0.*)
+        if "linear.weight" in state and "proj.0.weight" not in state:
+            state = {"proj.0.weight": state["linear.weight"],
+                     "proj.0.bias":   state["linear.bias"]}
         probe = LinearProbeClassification("cpu", n_classes, HIDDEN_DIM, logistic=True)
-        probe.load_state_dict(data["state_dict"])
+        probe.load_state_dict(state)
         probe.eval()
         probes[layer] = probe
 
