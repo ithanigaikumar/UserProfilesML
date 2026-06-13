@@ -213,8 +213,10 @@ def make_edit_function(
         device = output[0].device
         target = cf_target.to(torch.float).to(device)
         weight = probe.proj[0].weight.to(torch.float).to(device)
-        # Linear translation: x' = x + (target @ W) * N
+        # Contrast direction: move toward target, away from source
         delta = (target @ weight).detach()   # [1, hidden_dim]
+        # Normalise to unit length so N is a meaningful scale in activation space
+        delta = delta / (delta.norm() + 1e-8)
 
         hidden = output[0][:, -1, :].to(torch.float)
         hidden = hidden + delta * N
@@ -363,7 +365,7 @@ def main():
     parser.add_argument("--attribute", required=True, choices=list(ALL_ATTRIBUTES.keys()))
     parser.add_argument("--contrast", nargs=2, metavar=("SUB_A", "SUB_B"),
                         help="Two subcategories to contrast, e.g. --contrast expert novice")
-    parser.add_argument("--N", type=float, default=20.0, help="Intervention strength")
+    parser.add_argument("--N", type=float, default=15.0, help="Intervention strength (applied to unit-normalised delta)")
     parser.add_argument("--layers", nargs=2, type=int, default=[19, 29],
                         metavar=("FROM", "TO"), help="Layer range [from, to)")
     parser.add_argument("--batch-size", type=int, default=5)
