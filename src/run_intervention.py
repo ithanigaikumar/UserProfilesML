@@ -265,14 +265,14 @@ def make_probe_deltas(
     """
     Chen et al. approach: use the reading probe weight row for the target class
     as the translation direction, normalised to unit L2.
-    We negate because the sigmoid probe's W[i,:] points away from class i
-    (lower activation = higher sigmoid output after training with cross-entropy).
-    delta[layer] = -W[target_idx, :] / ||W[target_idx, :]||
+    For a sigmoid probe trained with cross-entropy, W[i,:] is pushed in the
+    direction of class-i activations during training, so W[i,:] points TOWARD
+    class i — no negation needed.
+    delta[layer] = W[target_idx, :] / ||W[target_idx, :]||
     """
     deltas = {}
     for layer, probe in probes.items():
         w = probe.proj[0].weight[target_idx].detach().float()  # [D]
-        w = -w  # negate: probe weight points away from class due to sigmoid convention
         deltas[layer] = w / (w.norm() + 1e-8)
     return deltas
 
@@ -416,7 +416,7 @@ def main():
     parser.add_argument("--attribute", required=True, choices=list(ALL_ATTRIBUTES.keys()))
     parser.add_argument("--contrast", nargs=2, metavar=("SUB_A", "SUB_B"),
                         help="Two subcategories to contrast, e.g. --contrast expert novice")
-    parser.add_argument("--N", type=float, default=8.0, help="Translation distance in activation space (L2 units, paper uses 8)")
+    parser.add_argument("--N", type=float, default=20.0, help="Translation distance in activation space (L2 units, Chen et al. use 20)")
     parser.add_argument("--layers", nargs=2, type=int, default=[20, 29],
                         metavar=("FROM", "TO"), help="Layer range [from, to)")
     parser.add_argument("--batch-size", type=int, default=5)
