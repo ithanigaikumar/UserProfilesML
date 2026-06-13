@@ -268,11 +268,12 @@ def make_probe_deltas(
     as the translation direction, normalised to unit L2.
     If randomize=True, replace with a random unit vector of the same shape
     (control condition: verifies any effect is attribute-specific, not generic
-    perturbation).
+    perturbation). Seed is offset by target_idx so the two control directions
+    are distinct from each other.
     """
     deltas = {}
     rng = torch.Generator()
-    rng.manual_seed(42)
+    rng.manual_seed(42 + target_idx)
     for layer, probe in probes.items():
         if randomize:
             w = torch.randn(probe.proj[0].weight.shape[1], generator=rng)
