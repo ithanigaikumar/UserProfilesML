@@ -18,7 +18,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from config import ATTRIBUTES, CONV_DIR, GEN_MODEL, N_TURNS, SEED
+from config import ALL_ATTRIBUTES, CONV_DIR, GEN_MODEL, N_TURNS, SEED
 
 random.seed(SEED)
 
@@ -69,7 +69,7 @@ def generate_for_attribute(
     out_path: Path,
     resume: bool = True,
 ) -> None:
-    attr = ATTRIBUTES[attr_name]
+    attr = ALL_ATTRIBUTES[attr_name]
     subcategories = attr["subcategories"]
     prompt_descs  = attr["prompt_desc"]
     n_per_class   = n_total // len(subcategories)
@@ -114,7 +114,7 @@ def generate_for_attribute(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--attribute", choices=list(ATTRIBUTES.keys()), help="Single attribute to generate")
+    parser.add_argument("--attribute", choices=list(ALL_ATTRIBUTES.keys()), help="Single attribute to generate")
     parser.add_argument("--all", action="store_true", help="Generate all attributes")
     parser.add_argument("--n", type=int, default=None, help="Override n_convos for the attribute")
     parser.add_argument("--no-resume", action="store_true", help="Overwrite existing files")
@@ -125,12 +125,12 @@ def main():
         raise EnvironmentError("Set the OPENAI_API_KEY environment variable before running.")
     client = OpenAI(api_key=api_key)
 
-    targets = list(ATTRIBUTES.keys()) if args.all else [args.attribute]
+    targets = list(ALL_ATTRIBUTES.keys()) if args.all else [args.attribute]
     if not targets or targets == [None]:
         parser.error("Specify --attribute or --all")
 
     for attr_name in targets:
-        n = args.n or ATTRIBUTES[attr_name]["n_convos"]
+        n = args.n or ALL_ATTRIBUTES[attr_name]["n_convos"]
         out_path = CONV_DIR / f"{attr_name}.jsonl"
         if args.no_resume and out_path.exists():
             out_path.unlink()

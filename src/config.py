@@ -22,10 +22,10 @@ for _d in (CONV_DIR, ACT_DIR, PROBE_DIR, RESULT_DIR, COT_DIR):
 # LLaMA-2-13B matches the paper exactly but requires Meta approval at:
 #   https://huggingface.co/meta-llama/Llama-2-13b-chat-hf
 #
-# MODEL_ID  = "mistralai/Mistral-7B-Instruct-v0.2"; NUM_LAYERS = 32; HIDDEN_DIM = 4096
-MODEL_ID   = "meta-llama/Llama-2-13b-chat-hf"
-NUM_LAYERS = 40       # 40 transformer blocks; index 0 = embed, 1-40 = blocks
-HIDDEN_DIM = 5120     # LLaMA-2-13B residual stream width
+# MODEL_ID  = "meta-llama/Llama-2-13b-chat-hf"; NUM_LAYERS = 40; HIDDEN_DIM = 5120
+MODEL_ID   = "mistralai/Mistral-7B-Instruct-v0.2"
+NUM_LAYERS = 32       # 32 transformer blocks
+HIDDEN_DIM = 4096     # Mistral-7B residual stream width
 
 # ── Attributes ────────────────────────────────────────────────────────────────
 # Each value has:

@@ -34,7 +34,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from config import (
     ACT_DIR,
-    ATTRIBUTES,
+    ALL_ATTRIBUTES,
     HIDDEN_DIM,
     L2_WEIGHT_DECAY,
     NUM_LAYERS,
@@ -147,7 +147,7 @@ def train_for_attribute(
     device: torch.device,
     overwrite: bool = False,
 ) -> None:
-    attr         = ATTRIBUTES[attr_name]
+    attr         = ALL_ATTRIBUTES[attr_name]
     subcategories = attr["subcategories"]
     n_classes     = len(subcategories)
     probe_subdir  = PROBE_DIR / attr_name
@@ -218,13 +218,13 @@ def train_for_attribute(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--attribute", choices=list(ATTRIBUTES.keys()))
+    parser.add_argument("--attribute", choices=list(ALL_ATTRIBUTES.keys()))
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
-    targets = list(ATTRIBUTES.keys()) if args.all else [args.attribute]
+    targets = list(ALL_ATTRIBUTES.keys()) if args.all else [args.attribute]
     if not targets or targets == [None]:
         parser.error("Specify --attribute or --all")
 
